@@ -24,6 +24,15 @@
                         icon="fa-paper-plane"
                     />
                     <button
+                        string="Generate signature fields"
+                        type="object"
+                        invisible="state not in ['1_draft', '0_sent']"
+                        name="action_auto_place_signature_fields"
+                        icon="fa-magic"
+                        groups="sign_oca.sign_oca_group_user"
+                        help="Add a required signature field per signer role when the request has no fields yet."
+                    />
+                    <button
                         string="Cancel"
                         type="object"
                         invisible="state not in ['1_draft', '0_sent', '2_signed']"
@@ -112,13 +121,19 @@
                         />
                         <field name="user_id" readonly="state != '1_draft'" />
                         <field name="record_ref" readonly="state != '1_draft'" />
+                        <field
+                            name="signing_order_enforced"
+                            readonly="state != '1_draft'"
+                        />
                     </group>
 
                     <field name="signer_ids" nolabel="1" readonly="state != '1_draft'">
                         <list editable="bottom">
+                            <field name="sequence" widget="handle" />
                             <field name="role_id" />
                             <field name="partner_id" />
                             <field name="signed_on" readonly="1" />
+                            <field name="is_current" readonly="1" />
                         </list>
                     </field>
                 </sheet>

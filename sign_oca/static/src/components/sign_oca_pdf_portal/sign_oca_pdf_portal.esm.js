@@ -1,8 +1,9 @@
 /** @odoo-module **/
-/* global window */
+/* global window, setTimeout */
 
 import {App, useRef, whenReady} from "@odoo/owl";
 import {_t} from "@web/core/l10n/translation";
+import {AlertDialog} from "@web/core/confirmation_dialog/confirmation_dialog";
 import {makeEnv, startServices} from "@web/env";
 import SignOcaPdf from "../sign_oca_pdf/sign_oca_pdf.esm.js";
 import {getTemplate} from "@web/core/templates";
@@ -10,12 +11,18 @@ import {MainComponentsContainer} from "@web/core/main_components_container";
 import {rpc} from "@web/core/network/rpc";
 import {startSignItemNavigator} from "./sign_oca_navigator.esm";
 
+// The pdf.js iframe may need a moment before the fields are rendered, so the
+// button retries a limited number of times before warning the signer.
+const SIGN_FIELD_RETRY_DELAY = 500;
+const SIGN_FIELD_MAX_RETRIES = 30;
+
 export class SignOcaPdfPortal extends SignOcaPdf {
     setup() {
         this.rpc = rpc;
         this.signOcaFooter = useRef("sign_oca_footer");
         this.signer_id = this.props.signer_id;
         this.access_token = this.props.access_token;
+        this.signFieldRetries = 0;
         super.setup(...arguments);
     }
     async willStart() {
@@ -79,6 +86,39 @@ export class SignOcaPdfPortal extends SignOcaPdf {
                 window.location.reload();
             }
         });
+    }
+    getSignatureField() {
+        const doc = this.iframe && this.iframe.el && this.iframe.el.contentDocument;
+        if (!doc) {
+            return null;
+        }
+        const fields = [...doc.querySelectorAll(".o_sign_oca_field")];
+        // Prefer the first field that has not been signed yet.
+        return fields.find((field) => !field.querySelector("img")) || fields[0] || null;
+    }
+    openSignatureField() {
+        const field = this.getSignatureField();
+        if (field) {
+            this.signFieldRetries = 0;
+            field.scrollIntoView({behavior: "smooth", block: "center"});
+            const clickable = field.firstElementChild || field;
+            clickable.click();
+            return;
+        }
+        if (this.signFieldRetries >= SIGN_FIELD_MAX_RETRIES) {
+            this.dialogService.add(AlertDialog, {
+                body: _t(
+                    "The document is not ready yet. Please reload the page and try again."
+                ),
+            });
+            return;
+        }
+        if (this.signFieldRetries === 0) {
+            // The iframe may not have rendered the fields yet.
+            this.postIframeFields();
+        }
+        this.signFieldRetries += 1;
+        setTimeout(() => this.openSignatureField(), SIGN_FIELD_RETRY_DELAY);
     }
     navigate() {
         const target = this.iframe.el.contentDocument.getElementById("viewerContainer");

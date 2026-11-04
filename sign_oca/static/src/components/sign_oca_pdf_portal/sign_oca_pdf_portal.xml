@@ -21,7 +21,20 @@
                                 Please Review And Act On This Document
                             </div>
                         </div>
-                        <div class="col-lg-4" />
+                        <div
+                            class="col-lg-4 d-flex justify-content-end align-items-center"
+                        >
+                            <!--
+                                Always available entry point to the signature
+                                fields: the signer must not depend on the
+                                navigator rendered inside the pdf.js iframe.
+                            -->
+                            <button
+                                type="button"
+                                class="btn btn-primary o_sign_oca_sign_button"
+                                t-on-click="() => this.openSignatureField()"
+                            >Sign document</button>
+                        </div>
                     </div>
                 </div>
             </header>

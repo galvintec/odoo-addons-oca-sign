@@ -22,6 +22,8 @@ from odoo.tools.pdf import PdfFileReader, PdfFileWriter
 
 _logger = logging.getLogger(__name__)
 
+SIGNATURE_FIELD_XMLID = "sign_oca.sign_field_signature"
+
 
 class SignOcaRequest(models.Model):
     _name = "sign.oca.request"
@@ -90,6 +92,10 @@ class SignOcaRequest(models.Model):
     )
     next_item_id = fields.Integer(compute="_compute_next_item_id")
     ask_location = fields.Boolean()
+    signing_order_enforced = fields.Boolean(
+        help="If checked, signers are notified one by one following the signing "
+        "order and only the current signer is allowed to sign.",
+    )
 
     @api.depends("signer_ids")
     @api.depends_context("uid")
@@ -246,26 +252,19 @@ class SignOcaRequest(models.Model):
         self.ensure_one()
         if self.state != "1_draft":
             return
+        if self._should_auto_place_signature_fields():
+            self._auto_place_signature_fields()
         self._set_action_log("validate")
         self.state = "0_sent"
-        for signer in self.signer_ids:
-            signer._portal_ensure_token()
-            if sign_now and signer.partner_id == self.env.user.partner_id:
-                continue
-            render_result = self.env["ir.qweb"]._render(
-                "sign_oca.sign_oca_template_mail",
-                {"record": signer, "body": message, "link": signer.access_url},
-                engine="ir.qweb",
-                minimal_qcontext=True,
-            )
-            self.env["mail.thread"].message_notify(
-                body=render_result,
-                partner_ids=signer.partner_id.ids,
-                subject=self.env._("New document to sign"),
-                subtype_id=self.env.ref("mail.mt_comment").id,
-                mail_auto_delete=False,
-                email_layout_xmlid="mail.mail_notification_light",
-            )
+        signers = self.signer_ids
+        if self.signing_order_enforced:
+            self._recompute_current_signer()
+            signers = self._get_next_pending_signer()
+        self._notify_signers(
+            signers,
+            message=message,
+            skip_current_user_if_sign_now=bool(sign_now),
+        )
 
     def action_send_signed_request(self):
         self.ensure_one()
@@ -307,6 +306,193 @@ class SignOcaRequest(models.Model):
             return
         if all(self.mapped("signer_ids.signed_on")):
             self.state = "2_signed"
+
+    # ------------------------------------------------------------------
+    # Signature fields
+    # ------------------------------------------------------------------
+    def _should_auto_place_signature_fields(self):
+        """Return whether the fallback signature fields must be generated.
+
+        They are only generated when the request has no field at all, so
+        requests configured from a template or with the designer are left
+        untouched.
+        """
+        self.ensure_one()
+        return not self.signatory_data
+
+    def _get_signature_field(self):
+        """Return the ``sign.oca.field`` used for the fallback fields."""
+        self.ensure_one()
+        return self.env.ref(SIGNATURE_FIELD_XMLID, raise_if_not_found=False)
+
+    def _get_signature_page(self):
+        """Return the page where the signature is placed (the last one)."""
+        self.ensure_one()
+        try:
+            reader = PdfFileReader(BytesIO(b64decode(self.data or b"")))
+            return max(reader.numPages, 1)
+        except Exception:
+            _logger.warning(
+                "Could not read the PDF of the signature request %s, the "
+                "signature field will be placed on the first page.",
+                self.name,
+                exc_info=True,
+            )
+            return 1
+
+    def _get_signature_roles(self):
+        """Return the distinct signer roles, in signing order."""
+        self.ensure_one()
+        roles = self.env["sign.oca.role"]
+        for signer in self.signer_ids.sorted(
+            key=lambda signer: (signer.sequence, signer.id)
+        ):
+            roles |= signer.role_id
+        return roles
+
+    def _get_signature_item_vals(self, role, item_id, index, page):
+        """Return the values of the signature field of ``role``.
+
+        ``index`` is the position of the role, used to stack the fields from
+        the bottom right corner of the page.
+        """
+        self.ensure_one()
+        field = self._get_signature_field()
+        return {
+            "id": item_id,
+            "tabindex": item_id,
+            "field_id": field.id,
+            "field_type": field.field_type,
+            "required": True,
+            "name": field.name,
+            "role_id": role.id,
+            "page": page,
+            "position_x": 55,
+            "position_y": max(10, 75 - 10 * index),
+            "width": 35,
+            "height": 10,
+            "value": False,
+            "default_value": False,
+            "placeholder": "",
+        }
+
+    def _auto_place_signature_fields(self):
+        """Add a required signature field for every distinct signer role.
+
+        Fields are defined per role, so a single field is added per distinct
+        role: duplicating fields of the same role would leave required fields
+        that nobody can fill.
+        """
+        self.ensure_one()
+        if not self._get_signature_field():
+            _logger.warning(
+                "The signature field (%s) is not available, the request %s has "
+                "been left without signature fields.",
+                SIGNATURE_FIELD_XMLID,
+                self.name,
+            )
+            return False
+        data = dict(self.signatory_data or {})
+        next_id = self.next_item_id
+        page = self._get_signature_page()
+        for index, role in enumerate(self._get_signature_roles()):
+            data[str(next_id)] = self._get_signature_item_vals(
+                role, next_id, index, page
+            )
+            next_id += 1
+        self.write({"signatory_data": data})
+        self._set_action_log("add_field")
+        return True
+
+    def action_auto_place_signature_fields(self):
+        """Generate the signature fields from the request form.
+
+        Sent requests are accepted as well: the fields are read when the signer
+        opens the portal, so a legacy request sent without fields can be
+        repaired without sending the email again.
+        """
+        self.ensure_one()
+        if self.state not in ("1_draft", "0_sent"):
+            raise UserError(
+                self.env._(
+                    "Signature fields can only be generated on draft or sent "
+                    "requests."
+                )
+            )
+        if not self.signer_ids:
+            raise UserError(
+                self.env._("Add at least one signer before generating fields.")
+            )
+        if self.signatory_data:
+            raise UserError(self.env._("This request already has signature fields."))
+        if not self._auto_place_signature_fields():
+            raise UserError(
+                self.env._(
+                    "The signature field is not available, please contact your "
+                    "administrator."
+                )
+            )
+        return True
+
+    # ------------------------------------------------------------------
+    # Signing order
+    # ------------------------------------------------------------------
+    def _get_pending_signers(self):
+        """Return the pending signers sorted by signing order."""
+        self.ensure_one()
+        return self.signer_ids.filtered(lambda signer: not signer.signed_on).sorted(
+            key=lambda signer: (signer.sequence, signer.id)
+        )
+
+    def _get_next_pending_signer(self):
+        """Return the next signer to be notified, if any."""
+        self.ensure_one()
+        return self._get_pending_signers()[:1]
+
+    def _notify_signers(self, signers, message="", skip_current_user_if_sign_now=False):
+        """Notify a subset of signers, reusing the mail template."""
+        self.ensure_one()
+        for signer in signers:
+            signer._portal_ensure_token()
+            if (
+                skip_current_user_if_sign_now
+                and signer.partner_id == self.env.user.partner_id
+            ):
+                continue
+            body = self.env["ir.qweb"]._render(
+                "sign_oca.sign_oca_template_mail",
+                {"record": signer, "body": message, "link": signer.access_url},
+                engine="ir.qweb",
+                minimal_qcontext=True,
+            )
+            self.env["mail.thread"].message_notify(
+                body=body,
+                partner_ids=signer.partner_id.ids,
+                subject=self.env._("New document to sign"),
+                subtype_id=self.env.ref("mail.mt_comment").id,
+                mail_auto_delete=False,
+                email_layout_xmlid="mail.mail_notification_light",
+            )
+
+    def _post_sign_notify_next(self):
+        """Notify the next pending signer after a signature is registered."""
+        self.ensure_one()
+        if not self.signing_order_enforced:
+            return
+        self._recompute_current_signer()
+        if self.state == "2_signed":
+            return
+        next_signer = self._get_next_pending_signer()
+        if next_signer:
+            self._notify_signers(next_signer)
+
+    def _recompute_current_signer(self):
+        """Flag the next pending signer as the one allowed to sign now."""
+        self.ensure_one()
+        current_signer = self._get_next_pending_signer()
+        self.sudo().signer_ids.write({"is_current": False})
+        if current_signer:
+            current_signer.sudo().is_current = True
 
     def _set_action_log_vals(self, action, **kwargs):
         vals = kwargs.copy()

@@ -1631,6 +1631,50 @@ msgstr "documento"
 msgid "sent"
 msgstr "enviado"
 
+#. module: sign_oca
+#. odoo-python
+#: code:addons/sign_oca/models/sign_oca_request.py:0
+msgid "Add at least one signer before generating fields."
+msgstr "Añada al menos un firmante antes de generar los campos."
+
+#. module: sign_oca
+#. odoo-python
+#: code:addons/sign_oca/models/sign_oca_request.py:0
+msgid "Signature fields can only be generated on draft or sent requests."
+msgstr ""
+"Los campos de firma sólo se pueden generar en solicitudes en borrador o "
+"enviadas."
+
+#. module: sign_oca
+#. odoo-python
+#: code:addons/sign_oca/models/sign_oca_request.py:0
+msgid "The signature field is not available, please contact your administrator."
+msgstr ""
+"El campo de firma no está disponible, contacte con su administrador."
+
+#. module: sign_oca
+#. odoo-python
+#: code:addons/sign_oca/models/sign_oca_request.py:0
+msgid "This request already has signature fields."
+msgstr "Esta solicitud ya tiene campos de firma."
+
+#. module: sign_oca
+#: model:ir.model.fields,field_description:sign_oca.field_sign_oca_request_signer__sequence
+msgid "Signing Order"
+msgstr "Orden de firma"
+
+#. module: sign_oca
+#: model_terms:ir.ui.view,arch_db:sign_oca.sign_oca_request_form_view
+msgid "Generate signature fields"
+msgstr "Generar campos de firma"
+
+#. module: sign_oca
+#. odoo-javascript
+#: code:addons/sign_oca/static/src/components/sign_oca_pdf_portal/sign_oca_pdf_portal.esm.js:0
+msgid "The document is not ready yet. Please reload the page and try again."
+msgstr ""
+"El documento todavía no está listo. Recargue la página e inténtelo de nuevo."
+
 #~ msgid "Document"
 #~ msgstr "Documento"
 

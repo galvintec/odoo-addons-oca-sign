@@ -113,6 +113,10 @@ export default class SignOcaPdfCommon extends Component {
             this.iframe.el.contentDocument.getElementsByClassName("page")[
                 item.page - 1
             ];
+        if (!page) {
+            // The page has not been rendered yet
+            return $();
+        }
         var signatureItem = $(
             renderToString(this.field_template, {
                 ...item,
@@ -124,17 +128,15 @@ export default class SignOcaPdfCommon extends Component {
     }
     // CheckSignItemsCompletion and navigate functions for handling navigation
     checkSignItemsCompletion() {
-        const signItemsToComplete = [];
-        $.each(this.info.items, (key, value) => {
-            if (this.postIframeField(value) && this.postIframeField(value)[0]) {
-                const $element = $(value);
-                const signItemToComplete = {};
-                signItemToComplete.data = $element[0];
-                signItemToComplete.el = this.postIframeField(value)[0];
-                signItemsToComplete.push(signItemToComplete);
-            }
-        });
-        return signItemsToComplete;
+        return Object.values(this.info.items)
+            .map((item) => {
+                const signatureItem = this.postIframeField(item);
+                if (!signatureItem || !signatureItem[0]) {
+                    return null;
+                }
+                return {data: item, el: signatureItem[0]};
+            })
+            .filter(Boolean);
     }
 }
 SignOcaPdfCommon.template = "sign_oca.SignOcaPdfCommon";

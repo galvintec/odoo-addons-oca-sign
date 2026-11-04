@@ -2,6 +2,7 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
 import base64
+import re
 
 import requests
 
@@ -78,3 +79,26 @@ class TestSignPortal(HttpCase):
             val = self.request.signer_ids.get_info()["items"][key].copy()
             val["value"] = "My Name"
             data[key] = val
+
+    def test_sign_assets_are_served_without_redirect(self):
+        js_response = self.url_open("/sign_oca/get_assets.js", allow_redirects=False)
+        self.assertEqual(js_response.status_code, 200)
+        self.assertIn("javascript", js_response.headers.get("Content-Type", ""))
+        self.assertEqual(js_response.content, b"")
+        css_response = self.url_open("/sign_oca/get_assets.css", allow_redirects=False)
+        self.assertEqual(css_response.status_code, 200)
+        self.assertIn("css", css_response.headers.get("Content-Type", ""))
+        self.assertTrue(css_response.content)
+
+    def test_portal_bundle_contains_the_sign_button(self):
+        self.request.action_send()
+        page = self.url_open(self.request.signer_ids.access_url)
+        self.assertEqual(page.status_code, 200)
+        bundle_urls = re.findall(
+            r"/web/assets/[^\"']+oca_sign\.assets_frontend_sign\.min\.js",
+            page.text,
+        )
+        self.assertTrue(bundle_urls, "The portal bundle must be loaded")
+        bundle = self.url_open(bundle_urls[0])
+        self.assertEqual(bundle.status_code, 200)
+        self.assertIn(b"o_sign_oca_sign_button", bundle.content)
