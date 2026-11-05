@@ -3,11 +3,16 @@ from urllib import parse
 
 from odoo import _, http
 from odoo.exceptions import AccessError, MissingError
-from odoo.http import request
+from odoo.http import Response, request
 from odoo.osv import expression
 
 from odoo.addons.base.models.assetsbundle import AssetsBundle
 from odoo.addons.portal.controllers.portal import CustomerPortal, pager as portal_pager
+
+CONTENT_TYPES = {
+    "css": "text/css",
+    "js": "application/javascript",
+}
 
 
 class SignController(http.Controller):
@@ -16,6 +21,12 @@ class SignController(http.Controller):
         bundle = "sign_oca.sign_assets"
         files, _ = request.env["ir.qweb"]._get_asset_content(bundle)
         asset = AssetsBundle(bundle, files)
+        if not self._bundle_has_assets(asset, ext):
+            # The bundle has nothing of the requested type (it only ships
+            # stylesheets), so there is nothing to serve. Returning the empty
+            # attachment built by the bundle would redirect to its own URL and
+            # the browser would fail with ERR_TOO_MANY_REDIRECTS.
+            return Response("", status=200, content_type=CONTENT_TYPES[ext])
         mock_attachment = getattr(asset, ext)()
         if isinstance(
             mock_attachment, list
@@ -24,6 +35,12 @@ class SignController(http.Controller):
         stream = request.env["ir.binary"]._get_stream_from(mock_attachment)
         response = stream.get_response()
         return response
+
+    def _bundle_has_assets(self, asset, ext):
+        if ext == "js":
+            # XML templates are compiled into the JavaScript bundle
+            return bool(asset.javascripts or asset.templates)
+        return bool(asset.stylesheets)
 
 
 class PortalSign(CustomerPortal):
